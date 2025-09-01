@@ -1,0 +1,7 @@
+python-dotenv
+fastapi
+uvicorn[standard]
+aiobotocore
+psycopg2-binary
+transformers
+torch
