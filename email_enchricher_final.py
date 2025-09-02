@@ -66,6 +66,7 @@ async def parse_emails_with_ai(emails: List[str]):
         save_to_csv(valid_results, CSV_FILE, ["email", "first_name", "last_name", "company"])
     return valid_results
 
+'''
 async def main():
     # Test emails
     test_emails = [
@@ -92,5 +93,4 @@ async def main():
         company = result['company'] or "N/A"
 
 if __name__ == "__main__":
-    # Run the async function
-    asyncio.run(main())
+    asyncio.run(main())'''

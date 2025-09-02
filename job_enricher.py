@@ -76,6 +76,7 @@ async def parse_linkedin_with_ai(linkedin_data: List[dict]):
         save_to_csv(valid_results, CSV_FILE, ["linkedin_title", "linkedin_description", "job_title", "company_name"])
     return valid_results
 
+'''
 async def main():
     # Test LinkedIn data (including your example)
     test_linkedin_data = [
@@ -112,3 +113,4 @@ async def main():
 if __name__ == "__main__":
     # Run the async function
     asyncio.run(main())
+'''
