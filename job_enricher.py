@@ -1,38 +1,11 @@
 import asyncio
-import csv
-import os
-from langchain_groq import ChatGroq
-from pydantic import BaseModel
-from typing import Optional, List
-import dotenv
+from typing import List
+from modules.llm import get_llm, LinkedInParseResult
+from modules.utils import save_to_csv, read_linkedin_from_csv
 
-dotenv.load_dotenv(".env")
-
-# Initialize Groq LLM with structured output binding
-class LinkedInParseResult(BaseModel):
-    job_title: Optional[str] = None
-    company_name: Optional[str] = None
-
-# Bind the structured output to the LLM
-llm = ChatGroq(
-    api_key=dotenv.get_key(".env", "API_KEY"),
-    model="llama-3.3-70b-versatile",
-    temperature=0,
-    max_tokens=None,
-    timeout=None,
-    max_retries=2,
-).with_structured_output(LinkedInParseResult)
+llm = get_llm(LinkedInParseResult)
 
 CSV_FILE = "data/linkedin_output.csv"
-os.makedirs("data", exist_ok=True)
-
-def save_to_csv(parsed_list: List[dict], csv_file: str = CSV_FILE):
-    """Save parsed results to CSV"""
-    with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["linkedin_title", "linkedin_description", "job_title", "company_name"])
-        writer.writeheader()
-        writer.writerows(parsed_list)
-    print(f"Saved {len(parsed_list)} results to {csv_file}")
 
 async def extract_linkedin_info(linkedin_title: str, linkedin_description: str) -> dict:
     """Extract job title and company name from LinkedIn data using structured output"""
@@ -100,28 +73,8 @@ async def parse_linkedin_with_ai(linkedin_data: List[dict]):
             })
     
     if valid_results:
-        save_to_csv(valid_results)
+        save_to_csv(valid_results, CSV_FILE, ["linkedin_title", "linkedin_description", "job_title", "company_name"])
     return valid_results
-
-def read_linkedin_from_csv(csv_file_path: str, title_column: str = 'linkedin_title', desc_column: str = 'linkedin_description') -> List[dict]:
-    linkedin_data = []
-    try:
-        with open(csv_file_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                if title_column in row and desc_column in row:
-                    linkedin_data.append({
-                        "linkedin_title": row[title_column].strip() if row[title_column] else "",
-                        "linkedin_description": row[desc_column].strip() if row[desc_column] else ""
-                    })
-        print(f"Read {len(linkedin_data)} LinkedIn profiles from {csv_file_path}")
-        return linkedin_data
-    except FileNotFoundError:
-        print(f"File {csv_file_path} not found")
-        return []
-    except Exception as e:
-        print(f"Error reading CSV file: {e}")
-        return []
 
 async def main():
     # Test LinkedIn data (including your example)
