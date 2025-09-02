@@ -15,9 +15,9 @@ class LinkedInParseResult(BaseModel):
     job_title: Optional[str] = None
     company_name: Optional[str] = None
 
-def get_llm(structured_output_model):
+def get_llm(structured_output_model, api_key: str):
     return ChatGroq(
-        api_key=dotenv.get_key(".env", "API_KEY"),
+        api_key=api_key,
         model="llama-3.3-70b-versatile",
         temperature=0,
         max_tokens=None,
