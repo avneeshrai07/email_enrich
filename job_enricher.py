@@ -1,116 +1,148 @@
-import asyncio
-from typing import List
+import os
+import csv
+import random
+from datetime import datetime
+from multiprocessing import Process, Manager, current_process
 from modules.llm import get_llm, LinkedInParseResult
-from modules.utils import save_to_csv, read_linkedin_from_csv
 
-llm = get_llm(LinkedInParseResult)
+# ------------------------------
+# Load API keys
+# ------------------------------
+API_KEYS = [os.getenv(f"API_KEY_{i}") for i in range(32)]
+API_KEYS = [k for k in API_KEYS if k]
 
-CSV_FILE = "data/linkedin_output.csv"
+if not API_KEYS:
+    raise RuntimeError("❌ Please set at least one API_KEY_X environment variable!")
 
-async def extract_linkedin_info(linkedin_title: str, linkedin_description: str) -> dict:
-    """Extract job title and company name from LinkedIn data using structured output"""
+# ------------------------------
+# Data paths
+# ------------------------------
+DATA_DIR = "data"
+CSV_FILE = os.path.join(DATA_DIR, "fetched_data.csv")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# ------------------------------
+# Initialize LLM with a key
+# ------------------------------
+def get_llm_with_key(api_key: str):
+    return get_llm(LinkedInParseResult, api_key=api_key)
+
+# ------------------------------
+# LLM call with retry
+# ------------------------------
+def call_llm_with_retry(llm_instance, prompt: str, max_retries: int = 3):
+    for attempt in range(max_retries):
+        try:
+            return llm_instance.invoke(prompt)
+        except Exception as e:
+            if "429" in str(e):
+                wait_time = (2 ** attempt) + random.uniform(0, 1)
+                print(f"[{current_process().name}] ⏳ Rate limit. Retrying in {wait_time:.1f}s...")
+                import time; time.sleep(wait_time)
+            else:
+                raise
+    raise RuntimeError(f"[{current_process().name}] Max retries exceeded.")
+
+# ------------------------------
+# Extract LinkedIn info
+# ------------------------------
+def extract_linkedin_info(llm_instance, title: str, description: str):
     prompt = f"""Extract the job title and company name from the provided LinkedIn profile information.
 
 Rules:
 - Extract the current job title (position/role) of the person
 - Extract the current company name where they work
-- Look for patterns like "Position at Company", "Role - Company", etc.
-- If multiple positions are mentioned, prioritize the current/most recent one
-- Return null if information cannot be clearly determined
-- Clean up the extracted information (remove extra words like "at", "with", etc.)
+- Prioritize the most recent position
+- Return null if information cannot be determined
+- Clean extra words
 
-LinkedIn Title: {linkedin_title}
-LinkedIn Description: {linkedin_description}
-
-Please extract the job title and company name.
+LinkedIn Title: {title}
+LinkedIn Description: {description}
 """
-    
     try:
-        print(f"Processing LinkedIn profile...")
-        
-        # Use the structured output LLM directly
-        response = await asyncio.to_thread(llm.invoke, prompt)
-        
-        # Convert Pydantic model to dict
-        result_dict = {
-            "linkedin_title": linkedin_title,
-            "linkedin_description": linkedin_description,
-            "job_title": response.job_title,
-            "company_name": response.company_name
-        }
-        
-        print(f"Parsed: Job Title: {response.job_title}, Company: {response.company_name}")
-        return result_dict
-        
+        response = call_llm_with_retry(llm_instance, prompt)
+        return {"job_title": response.job_title, "company_name": response.company_name}
     except Exception as e:
-        print(f"Error parsing LinkedIn data: {e}")
-        return {
-            "linkedin_title": linkedin_title,
-            "linkedin_description": linkedin_description,
-            "job_title": None, 
-            "company_name": None
-        }
+        print(f"[{current_process().name}] ❌ Error: {e}")
+        return {"job_title": "", "company_name": ""}
 
-async def parse_linkedin_with_ai(linkedin_data: List[dict]):
-    async def process_linkedin(data):
-        await asyncio.sleep(0.5)  
-        return await extract_linkedin_info(data["linkedin_title"], data["linkedin_description"])
-    
-    tasks = [process_linkedin(data) for data in linkedin_data]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    valid_results = []
-    for i, result in enumerate(results):
-        if isinstance(result, dict):
-            valid_results.append(result)
-        else:
-            print(f"Failed to process {linkedin_data[i]}: {result}")
-            valid_results.append({
-                "linkedin_title": linkedin_data[i].get("linkedin_title", ""),
-                "linkedin_description": linkedin_data[i].get("linkedin_description", ""), 
-                "job_title": None, 
-                "company_name": None
-            })
-    
-    if valid_results:
-        save_to_csv(valid_results, CSV_FILE, ["linkedin_title", "linkedin_description", "job_title", "company_name"])
-    return valid_results
+# ------------------------------
+# Worker function
+# ------------------------------
+def worker(batch, api_key, seen_signatures, return_list):
+    llm_instance = get_llm_with_key(api_key)
+    results = []
 
-'''
-async def main():
-    # Test LinkedIn data (including your example)
-    test_linkedin_data = [
-        {
-            "linkedin_title": "Siddini Venkatesh Prabhu - Professor at Indian Institute of Technology, Bombay | LinkedIn",
-            "linkedin_description": "Professor at Indian Institute of Technology, Bombay · Experience: Indian Institute of Technology, Bombay · Location: Mumbai · 151 connections on LinkedIn. View Siddini Venkatesh Prabhu's profile on LinkedIn, a professional community of 1 billion members."
-        },
-        {
-            "linkedin_title": "John Smith - Software Engineer at Google | LinkedIn",
-            "linkedin_description": "Software Engineer at Google · Experience: Google, Microsoft · Location: San Francisco · 500+ connections on LinkedIn."
-        },
-        {
-            "linkedin_title": "Sarah Johnson - Marketing Manager at Apple Inc. | LinkedIn", 
-            "linkedin_description": "Marketing Manager at Apple Inc. · Experience: Apple Inc., Amazon · Location: Cupertino · 300+ connections on LinkedIn."
-        }
-    ]
-    
-    print("Processing LinkedIn profiles with structured output...")
-    results = await parse_linkedin_with_ai(test_linkedin_data)
-    
-    print(f"\nProcessed {len(results)} LinkedIn profiles. Results saved in {CSV_FILE}")
-    print("\nResults:")
-    for result in results:
-        job_title = result['job_title'] or "N/A"
-        company_name = result['company_name'] or "N/A"
-        print(f"Job Title: {job_title} | Company: {company_name}")
+    for i, row in enumerate(batch, start=1):
+        title = row.get("linkedin_title", "").strip()
+        description = row.get("linkedin_description", "").strip()
+        signature = f"{title}|{description}".lower()
 
-    # Alternative: Read from CSV file
-    # csv_file_path = "input_linkedin_data.csv"  # Your input CSV file
-    # linkedin_data = read_linkedin_from_csv(csv_file_path)
-    # if linkedin_data:
-    #     results = await parse_linkedin_with_ai(linkedin_data)
+        # Global duplicate check
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
 
+        result = extract_linkedin_info(llm_instance, title, description)
+        row.update(result)
+        results.append(row)
+        print(f"[{current_process().name}] ✅ [{i}/{len(batch)}] Parsed: {result['job_title']} at {result['company_name']}")
+
+    return_list.extend(results)
+
+# ------------------------------
+# Main
+# ------------------------------
+def main():
+    if not os.path.exists(CSV_FILE):
+        print(f"❌ File {CSV_FILE} does not exist")
+        return
+
+    with open(CSV_FILE, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        fieldnames = reader.fieldnames or []
+
+    if not rows:
+        print("⚠️ CSV is empty")
+        return
+
+    # Divide rows into 32 chunks
+    num_keys = len(API_KEYS)
+    chunk_size = (len(rows) + num_keys - 1) // num_keys
+    chunks = [rows[i*chunk_size:(i+1)*chunk_size] for i in range(num_keys)]
+
+    manager = Manager()
+    seen_signatures = manager.set()
+    return_list = manager.list()
+    processes = []
+
+    # Start a process for each API key
+    for i, api_key in enumerate(API_KEYS):
+        p = Process(target=worker, args=(chunks[i], api_key, seen_signatures, return_list), name=f"APIWorker-{i}")
+        p.start()
+        processes.append(p)
+
+    # Wait for all processes to finish
+    for p in processes:
+        p.join()
+
+    # Final CSV
+    for col in ["company_name", "job_title"]:
+        if col not in fieldnames:
+            fieldnames.append(col)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = os.path.join(DATA_DIR, f"enriched_parallel_{timestamp}.csv")
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(return_list)
+
+    print(f"🎉 All data processed. CSV saved at {output_file}")
+
+# ------------------------------
+# Entry point
+# ------------------------------
 if __name__ == "__main__":
-    # Run the async function
-    asyncio.run(main())
-'''
+    main()

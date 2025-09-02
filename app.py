@@ -29,3 +29,7 @@ async def enrich_emails(request: EmailsRequest):
 async def enrich_jobs(request: JobRequest):
     enriched_data = await parse_linkedin_with_ai(request.linkedin_data)
     return {"results": enriched_data}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
